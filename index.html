@@ -1,0 +1,281 @@
+<!doctype html>
+<html lang="en">
+<head>
+	<meta charset="utf-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no, viewport-fit=cover" />
+	<title>Flappy Bird - Vanilla JS</title>
+	<style>
+		html, body {
+			margin: 0;
+			height: 100%;
+			overflow: hidden;
+			background: linear-gradient(180deg, #70c5ce 0%, #b2e6f0 100%);
+			font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+			color: #083649;
+		}
+		canvas {
+			display: block;
+			width: 100vw;
+			height: 100vh;
+			touch-action: none;
+		}
+		.hint {
+			position: fixed;
+			top: 10px;
+			left: 50%;
+			transform: translateX(-50%);
+			background: rgba(255,255,255,0.9);
+			padding: 6px 10px;
+			border-radius: 8px;
+			font-size: 14px;
+			user-select: none;
+			pointer-events: none;
+		}
+	</style>
+</head>
+<body>
+	<div class="hint">Tap the screen (or press Space) to flap</div>
+	<canvas id="game"></canvas>
+
+	<script>
+		const canvas = document.getElementById('game');
+		const ctx = canvas.getContext('2d', { alpha: false });
+
+		let screenWidth = 0;
+		let screenHeight = 0;
+
+		let isGameOver = false;
+		let score = 0;
+
+		let birdX = 0;
+		let birdY = 0;
+		let birdRadius = 0;
+		let birdVelocityY = 0;
+
+		let gravity = 0;
+		let jumpVelocity = 0;
+		let pipeSpeed = 0;
+		let pipeGap = 0;
+		let pipeWidth = 0;
+		let pipeSpacing = 0;
+		let groundY = 0;
+
+		let pipes = [];
+
+		function resize() {
+			const dpr = Math.min(window.devicePixelRatio || 1, 2);
+			screenWidth = Math.floor(window.innerWidth * dpr);
+			screenHeight = Math.floor(window.innerHeight * dpr);
+			canvas.width = screenWidth;
+			canvas.height = screenHeight;
+			canvas.style.width = '100vw';
+			canvas.style.height = '100vh';
+
+			groundY = Math.floor(screenHeight * 0.92);
+
+			birdRadius = Math.max(10, Math.floor(screenHeight * 0.025));
+			birdX = Math.floor(screenWidth * 0.25);
+
+			pipeWidth = Math.max(40 * dpr, Math.floor(screenWidth * 0.12));
+			pipeGap = Math.max(120 * dpr, Math.floor(screenHeight * 0.22));
+			pipeSpacing = Math.max(screenWidth * 0.6, pipeWidth * 3);
+
+			pipeSpeed = Math.max(120 * dpr, Math.floor(screenWidth * 0.35));
+			gravity = Math.max(800 * dpr, Math.floor(screenHeight * 1.8));
+			jumpVelocity = -Math.max(320 * dpr, Math.floor(screenHeight * 0.7));
+		}
+
+		function resetGame() {
+			isGameOver = false;
+			score = 0;
+			birdY = Math.floor(screenHeight * 0.45);
+			birdVelocityY = 0;
+
+			pipes = [];
+			const firstX = Math.floor(screenWidth * 0.8);
+			const num = 3;
+			for (let i = 0; i < num; i++) {
+				const x = firstX + i * pipeSpacing;
+				pipes.push(makePipe(x));
+			}
+		}
+
+		function makePipe(x) {
+			const minCenter = Math.floor(screenHeight * 0.28);
+			const maxCenter = Math.floor(screenHeight * 0.72);
+			const gapCenterY = Math.floor(minCenter + Math.random() * (maxCenter - minCenter));
+			return { x, gapCenterY, scored: false };
+		}
+
+		function flap() {
+			if (isGameOver) {
+				resetGame();
+				return;
+			}
+			birdVelocityY = jumpVelocity;
+		}
+
+		window.addEventListener('pointerdown', (e) => {
+			e.preventDefault();
+			flap();
+		});
+		window.addEventListener('keydown', (e) => {
+			if (e.code === 'Space' || e.code === 'ArrowUp') {
+				e.preventDefault();
+				flap();
+			}
+		});
+
+		window.addEventListener('resize', () => {
+			const wasOver = isGameOver;
+			resize();
+			if (!wasOver) {
+				if (pipes.length > 0) {
+					let startX = Math.floor(screenWidth * 0.8);
+					for (let i = 0; i < pipes.length; i++) {
+						pipes[i].x = startX + i * pipeSpacing;
+					}
+				}
+			}
+		});
+
+		function update(dt) {
+			if (isGameOver) return;
+
+			birdVelocityY += gravity * dt;
+			birdY += birdVelocityY * dt;
+
+			for (const pipe of pipes) {
+				pipe.x -= pipeSpeed * dt;
+				if (!pipe.scored && pipe.x + pipeWidth < birdX - birdRadius) {
+					pipe.scored = true;
+					score += 1;
+				}
+			}
+
+			if (pipes.length > 0 && pipes[0].x + pipeWidth < -20) {
+				pipes.shift();
+				const lastX = pipes[pipes.length - 1].x;
+				pipes.push(makePipe(lastX + pipeSpacing));
+			}
+
+			if (birdY + birdRadius >= groundY || birdY - birdRadius <= 0) {
+				isGameOver = true;
+				return;
+			}
+
+			for (const pipe of pipes) {
+				const inX = birdX + birdRadius > pipe.x && birdX - birdRadius < pipe.x + pipeWidth;
+				if (inX) {
+					const gapTop = pipe.gapCenterY - pipeGap / 2;
+					const gapBottom = pipe.gapCenterY + pipeGap / 2;
+					const inGap = birdY - birdRadius > gapTop && birdY + birdRadius < gapBottom;
+					if (!inGap) {
+						isGameOver = true;
+						return;
+					}
+				}
+			}
+		}
+
+		function drawBackground() {
+			ctx.fillStyle = '#6dc16d';
+			ctx.fillRect(0, groundY, screenWidth, screenHeight - groundY);
+
+			ctx.fillStyle = '#8bd08b';
+			for (let i = 0; i < 4; i++) {
+				const hillWidth = Math.floor(screenWidth * 0.5);
+				const x = Math.floor((i * screenWidth) / 3);
+				const y = groundY - Math.floor(screenHeight * 0.12);
+				ctx.beginPath();
+				ctx.ellipse(x, y, hillWidth / 2, screenHeight * 0.12, 0, 0, Math.PI, true);
+				ctx.fill();
+			}
+		}
+
+		function drawPipes() {
+			ctx.fillStyle = '#5ecb3f';
+			for (const pipe of pipes) {
+				const gapTop = pipe.gapCenterY - pipeGap / 2;
+				const gapBottom = pipe.gapCenterY + pipeGap / 2;
+
+				ctx.fillRect(pipe.x, 0, pipeWidth, gapTop);
+				ctx.fillRect(pipe.x, gapBottom, pipeWidth, groundY - gapBottom);
+
+				ctx.fillStyle = '#4fa736';
+				ctx.fillRect(pipe.x - 2, gapTop - 16, pipeWidth + 4, 16);
+				ctx.fillRect(pipe.x - 2, gapBottom, pipeWidth + 4, 16);
+				ctx.fillStyle = '#5ecb3f';
+			}
+		}
+
+		function drawBird() {
+			ctx.fillStyle = '#ffd166';
+			ctx.beginPath();
+			ctx.arc(birdX, birdY, birdRadius, 0, Math.PI * 2);
+			ctx.fill();
+
+			ctx.fillStyle = '#ffffff';
+			ctx.beginPath();
+			ctx.arc(birdX + birdRadius * 0.3, birdY - birdRadius * 0.25, birdRadius * 0.35, 0, Math.PI * 2);
+			ctx.fill();
+			ctx.fillStyle = '#083649';
+			ctx.beginPath();
+			ctx.arc(birdX + birdRadius * 0.45, birdY - birdRadius * 0.25, birdRadius * 0.15, 0, Math.PI * 2);
+			ctx.fill();
+
+			ctx.fillStyle = '#ff9f1c';
+			ctx.beginPath();
+			ctx.moveTo(birdX + birdRadius * 0.6, birdY);
+			ctx.lineTo(birdX + birdRadius * 1.2, birdY - birdRadius * 0.15);
+			ctx.lineTo(birdX + birdRadius * 1.2, birdY + birdRadius * 0.15);
+			ctx.closePath();
+			ctx.fill();
+		}
+
+		function drawScore() {
+			ctx.fillStyle = 'rgba(255,255,255,0.9)';
+			ctx.font = Math.floor(screenHeight * 0.06) + 'px system-ui, Arial';
+			ctx.textAlign = 'center';
+			ctx.textBaseline = 'top';
+			ctx.fillText(String(score), screenWidth / 2, Math.floor(screenHeight * 0.03));
+		}
+
+		function drawGameOver() {
+			if (!isGameOver) return;
+			ctx.fillStyle = 'rgba(0,0,0,0.35)';
+			ctx.fillRect(0, 0, screenWidth, screenHeight);
+
+			ctx.fillStyle = '#ffffff';
+			ctx.textAlign = 'center';
+			ctx.textBaseline = 'middle';
+			ctx.font = Math.floor(screenHeight * 0.08) + 'px system-ui, Arial';
+			ctx.fillText('Game Over', screenWidth / 2, screenHeight * 0.4);
+
+			ctx.font = Math.floor(screenHeight * 0.045) + 'px system-ui, Arial';
+			ctx.fillText('Tap to restart', screenWidth / 2, screenHeight * 0.5);
+		}
+
+		let lastTs = 0;
+		function loop(ts) {
+			if (!lastTs) lastTs = ts;
+			const dt = Math.min(0.033, (ts - lastTs) / 1000);
+			lastTs = ts;
+
+			update(dt);
+			ctx.clearRect(0, 0, screenWidth, screenHeight);
+			drawBackground();
+			drawPipes();
+			drawBird();
+			drawScore();
+			drawGameOver();
+
+			requestAnimationFrame(loop);
+		}
+
+		resize();
+		resetGame();
+		requestAnimationFrame(loop);
+	</script>
+</body>
+</html>
