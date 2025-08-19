@@ -17,7 +17,7 @@
 			display: block;
 			width: 100vw;
 			height: 100vh;
-			touch-action: none;
+			touch-action: none; /* prevent scrolling while tapping */
 		}
 		.hint {
 			position: fixed;
@@ -34,7 +34,7 @@
 	</style>
 </head>
 <body>
-	<div class="hint">Tap the screen (or press Space) to flap</div>
+	<div class="hint">Tap to start • Tap to flap • Space also works</div>
 	<canvas id="game"></canvas>
 
 	<script>
@@ -44,25 +44,48 @@
 		let screenWidth = 0;
 		let screenHeight = 0;
 
+		// Game state
+		let isStarted = false;
 		let isGameOver = false;
 		let score = 0;
+		let bestScore = Number(localStorage.getItem('bestScore') || 0);
+		let timeSinceStart = 0;
 
+		// Bird
 		let birdX = 0;
 		let birdY = 0;
 		let birdRadius = 0;
 		let birdVelocityY = 0;
 
+		// Physics/config (recomputed on resize)
 		let gravity = 0;
 		let jumpVelocity = 0;
-		let pipeSpeed = 0;
-		let pipeGap = 0;
+pipeSpeed = Math.max(90 * dpr, Math.floor(screenWidth * 0.24)); // slower pipes		let pipeGap = 0;
 		let pipeWidth = 0;
 		let pipeSpacing = 0;
 		let groundY = 0;
 
+		// Pipes: array of { x, gapCenterY, scored }
 		let pipes = [];
 
+		// Tiny sounds (no files needed)
+		let audioCtx;
+		function playTone(freq, dur) {
+			try {
+				audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+				const os = audioCtx.createOscillator();
+				const gain = audioCtx.createGain();
+				os.frequency.value = freq;
+				os.type = 'square';
+				gain.gain.value = 0.05;
+				os.connect(gain).connect(audioCtx.destination);
+				os.start();
+				os.stop(audioCtx.currentTime + dur);
+			} catch {}
+		}
+
 		function resize() {
+			// Match device pixels for sharpness
 			const dpr = Math.min(window.devicePixelRatio || 1, 2);
 			screenWidth = Math.floor(window.innerWidth * dpr);
 			screenHeight = Math.floor(window.innerHeight * dpr);
@@ -71,6 +94,7 @@
 			canvas.style.width = '100vw';
 			canvas.style.height = '100vh';
 
+			// Recompute sizes relative to screen
 			groundY = Math.floor(screenHeight * 0.92);
 
 			birdRadius = Math.max(10, Math.floor(screenHeight * 0.025));
@@ -80,17 +104,20 @@
 			pipeGap = Math.max(120 * dpr, Math.floor(screenHeight * 0.22));
 			pipeSpacing = Math.max(screenWidth * 0.6, pipeWidth * 3);
 
-			pipeSpeed = Math.max(120 * dpr, Math.floor(screenWidth * 0.35));
-			gravity = Math.max(800 * dpr, Math.floor(screenHeight * 1.8));
-			jumpVelocity = -Math.max(320 * dpr, Math.floor(screenHeight * 0.7));
+			pipeSpeed = Math.max(120 * dpr, Math.floor(screenWidth * 0.35)); // px/s
+			gravity = Math.max(800 * dpr, Math.floor(screenHeight * 1.8));   // px/s^2
+			jumpVelocity = -Math.max(320 * dpr, Math.floor(screenHeight * 0.7)); // px/s
 		}
 
 		function resetGame() {
 			isGameOver = false;
+			isStarted = false;
 			score = 0;
+			timeSinceStart = 0;
 			birdY = Math.floor(screenHeight * 0.45);
 			birdVelocityY = 0;
 
+			// Seed initial pipes
 			pipes = [];
 			const firstX = Math.floor(screenWidth * 0.8);
 			const num = 3;
@@ -108,13 +135,23 @@
 		}
 
 		function flap() {
+			// Start on first tap
+			if (!isStarted && !isGameOver) {
+				isStarted = true;
+				playTone(660, 0.05);
+				return;
+			}
+			// Restart on game over
 			if (isGameOver) {
 				resetGame();
 				return;
 			}
+			// Normal flap
 			birdVelocityY = jumpVelocity;
+			playTone(880, 0.05);
 		}
 
+		// Input: tap/click/space
 		window.addEventListener('pointerdown', (e) => {
 			e.preventDefault();
 			flap();
@@ -129,7 +166,9 @@
 		window.addEventListener('resize', () => {
 			const wasOver = isGameOver;
 			resize();
+			// Keep gameplay consistent after rotate/resize
 			if (!wasOver) {
+				// shift pipes so the nearest stays visible
 				if (pipes.length > 0) {
 					let startX = Math.floor(screenWidth * 0.8);
 					for (let i = 0; i < pipes.length; i++) {
@@ -139,31 +178,56 @@
 			}
 		});
 
+		function endGame() {
+			isGameOver = true;
+			if (score > bestScore) {
+				bestScore = score;
+				localStorage.setItem('bestScore', String(bestScore));
+			}
+			navigator.vibrate?.(120);
+			playTone(200, 0.2);
+		}
+
 		function update(dt) {
 			if (isGameOver) return;
+			if (!isStarted) return;
 
+			timeSinceStart += dt;
+
+			// Difficulty: ramps up with score and time
+			const difficulty = Math.min(1.6, 1 + score * 0.03 + timeSinceStart * 0.02);
+			const currentPipeSpeed = pipeSpeed * difficulty;
+
+			// Bird physics
 			birdVelocityY += gravity * dt;
 			birdY += birdVelocityY * dt;
 
+			// Move pipes
 			for (const pipe of pipes) {
-				pipe.x -= pipeSpeed * dt;
+				pipe.x -= currentPipeSpeed * dt;
+
+				// Score when bird passes a pipe
 				if (!pipe.scored && pipe.x + pipeWidth < birdX - birdRadius) {
 					pipe.scored = true;
 					score += 1;
+					playTone(520, 0.05);
 				}
 			}
 
+			// Recycle pipes
 			if (pipes.length > 0 && pipes[0].x + pipeWidth < -20) {
 				pipes.shift();
 				const lastX = pipes[pipes.length - 1].x;
 				pipes.push(makePipe(lastX + pipeSpacing));
 			}
 
+			// Collisions: ground/ceiling
 			if (birdY + birdRadius >= groundY || birdY - birdRadius <= 0) {
-				isGameOver = true;
+				endGame();
 				return;
 			}
 
+			// Collisions: pipes
 			for (const pipe of pipes) {
 				const inX = birdX + birdRadius > pipe.x && birdX - birdRadius < pipe.x + pipeWidth;
 				if (inX) {
@@ -171,7 +235,7 @@
 					const gapBottom = pipe.gapCenterY + pipeGap / 2;
 					const inGap = birdY - birdRadius > gapTop && birdY + birdRadius < gapBottom;
 					if (!inGap) {
-						isGameOver = true;
+						endGame();
 						return;
 					}
 				}
@@ -179,9 +243,11 @@
 		}
 
 		function drawBackground() {
+			// Ground
 			ctx.fillStyle = '#6dc16d';
 			ctx.fillRect(0, groundY, screenWidth, screenHeight - groundY);
 
+			// Simple distant hills
 			ctx.fillStyle = '#8bd08b';
 			for (let i = 0; i < 4; i++) {
 				const hillWidth = Math.floor(screenWidth * 0.5);
@@ -199,9 +265,13 @@
 				const gapTop = pipe.gapCenterY - pipeGap / 2;
 				const gapBottom = pipe.gapCenterY + pipeGap / 2;
 
+				// Top pipe
 				ctx.fillRect(pipe.x, 0, pipeWidth, gapTop);
+
+				// Bottom pipe
 				ctx.fillRect(pipe.x, gapBottom, pipeWidth, groundY - gapBottom);
 
+				// Pipe rims
 				ctx.fillStyle = '#4fa736';
 				ctx.fillRect(pipe.x - 2, gapTop - 16, pipeWidth + 4, 16);
 				ctx.fillRect(pipe.x - 2, gapBottom, pipeWidth + 4, 16);
@@ -210,11 +280,13 @@
 		}
 
 		function drawBird() {
+			// Body
 			ctx.fillStyle = '#ffd166';
 			ctx.beginPath();
 			ctx.arc(birdX, birdY, birdRadius, 0, Math.PI * 2);
 			ctx.fill();
 
+			// Eye
 			ctx.fillStyle = '#ffffff';
 			ctx.beginPath();
 			ctx.arc(birdX + birdRadius * 0.3, birdY - birdRadius * 0.25, birdRadius * 0.35, 0, Math.PI * 2);
@@ -224,6 +296,7 @@
 			ctx.arc(birdX + birdRadius * 0.45, birdY - birdRadius * 0.25, birdRadius * 0.15, 0, Math.PI * 2);
 			ctx.fill();
 
+			// Beak
 			ctx.fillStyle = '#ff9f1c';
 			ctx.beginPath();
 			ctx.moveTo(birdX + birdRadius * 0.6, birdY);
@@ -234,11 +307,32 @@
 		}
 
 		function drawScore() {
+			// Current score (center top)
 			ctx.fillStyle = 'rgba(255,255,255,0.9)';
 			ctx.font = Math.floor(screenHeight * 0.06) + 'px system-ui, Arial';
 			ctx.textAlign = 'center';
 			ctx.textBaseline = 'top';
 			ctx.fillText(String(score), screenWidth / 2, Math.floor(screenHeight * 0.03));
+
+			// Best score (top-left)
+			ctx.font = Math.floor(screenHeight * 0.03) + 'px system-ui, Arial';
+			ctx.textAlign = 'left';
+			ctx.fillText('Best: ' + bestScore, Math.floor(screenWidth * 0.03), Math.floor(screenHeight * 0.03));
+		}
+
+		function drawStart() {
+			if (isStarted || isGameOver) return;
+			ctx.fillStyle = 'rgba(0,0,0,0.35)';
+			ctx.fillRect(0, 0, screenWidth, screenHeight);
+
+			ctx.fillStyle = '#ffffff';
+			ctx.textAlign = 'center';
+			ctx.textBaseline = 'middle';
+			ctx.font = Math.floor(screenHeight * 0.08) + 'px system-ui, Arial';
+			ctx.fillText('Tap to start', screenWidth / 2, screenHeight * 0.45);
+
+			ctx.font = Math.floor(screenHeight * 0.04) + 'px system-ui, Arial';
+			ctx.fillText('Then tap to flap', screenWidth / 2, screenHeight * 0.55);
 		}
 
 		function drawGameOver() {
@@ -254,25 +348,31 @@
 
 			ctx.font = Math.floor(screenHeight * 0.045) + 'px system-ui, Arial';
 			ctx.fillText('Tap to restart', screenWidth / 2, screenHeight * 0.5);
+
+			ctx.font = Math.floor(screenHeight * 0.035) + 'px system-ui, Arial';
+			ctx.fillText('Best: ' + bestScore, screenWidth / 2, screenHeight * 0.6);
 		}
 
 		let lastTs = 0;
 		function loop(ts) {
 			if (!lastTs) lastTs = ts;
-			const dt = Math.min(0.033, (ts - lastTs) / 1000);
+			const dt = Math.min(0.033, (ts - lastTs) / 1000); // clamp dt
 			lastTs = ts;
 
 			update(dt);
+			// Draw
 			ctx.clearRect(0, 0, screenWidth, screenHeight);
 			drawBackground();
 			drawPipes();
 			drawBird();
 			drawScore();
+			drawStart();
 			drawGameOver();
 
 			requestAnimationFrame(loop);
 		}
 
+		// Init
 		resize();
 		resetGame();
 		requestAnimationFrame(loop);
